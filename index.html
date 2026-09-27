@@ -3,16 +3,177 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kanban Board Kolaborasi Online</title>
+    <title>Kanban Board</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK via CDN (Tanpa NPM) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        // ===================================================
+        // GANTI BAGIAN const firebaseConfig INI DENGAN MILIKMU
+        // ===================================================
+         const firebaseConfig = {
+            apiKey: "AIzaSyAwltZ2_2g6-VTqaxCvWE3QG8jIFKYmsaE",
+            authDomain: "mykanbanboard-68122.firebaseapp.com",
+            projectId: "mykanbanboard-68122",
+            storageBucket: "mykanbanboard-68122.firebasestorage.app",
+            messagingSenderId: "580780157519",
+            appId: "1:580780157519:web:0b6ff79b465f03c324983a"
+         };
+        // ===================================================
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        let currentRoom = window.location.hash ? window.location.hash.substring(1) : 'pribadi-saya';
+        let tasks = [];
+        let dbRef = null;
+
+        document.getElementById('roomInput').value = currentRoom;
+        document.getElementById('currentRoomDisplay').textContent = currentRoom;
+
+        function initRoomListener() {
+            let safeRoomKey = currentRoom.replace(/[.#$\/\[\]]/g, "_");
+            dbRef = ref(db, 'kanban_rooms/' + safeRoomKey);
+
+            onValue(dbRef, (snapshot) => {
+                const data = snapshot.val();
+                tasks = data ? (Array.isArray(data) ? data : Object.values(data)) : [];
+                renderTasks();
+            });
+        }
+
+        initRoomListener();
+
+        window.switchRoom = function() {
+            let val = document.getElementById('roomInput').value.trim().toLowerCase().replace(/\s+/g, '-');
+            if(!val) return alert('Nama room tidak boleh kosong!');
+            window.location.hash = val;
+            currentRoom = val;
+            document.getElementById('currentRoomDisplay').textContent = currentRoom;
+            initRoomListener();
+        }
+
+        window.shareRoom = function() {
+            let shareUrl = window.location.origin + window.location.pathname + '#' + currentRoom;
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                alert('Link room berhasil disalin! Kirim ke teman kelompokmu:\n\n' + shareUrl);
+            }).catch(() => {
+                prompt("Salin link ini:", shareUrl);
+            });
+        }
+
+        function saveToCloud() {
+            if(dbRef) {
+                set(dbRef, tasks);
+            }
+        }
+
+        window.openModal = function(status) {
+            document.getElementById('taskStatusInput').value = status;
+            document.getElementById('taskTitleInput').value = '';
+            document.getElementById('taskModal').classList.remove('hidden');
+            document.getElementById('taskModal').classList.add('flex');
+        }
+
+        window.closeModal = function() {
+            document.getElementById('taskModal').classList.remove('flex');
+            document.getElementById('taskModal').classList.add('hidden');
+        }
+
+        window.saveTask = function() {
+            let title = document.getElementById('taskTitleInput').value.trim();
+            if(!title) return alert('Judul tidak boleh kosong!');
+            
+            let newTask = {
+                id: Date.now(),
+                title: title,
+                status: document.getElementById('taskStatusInput').value,
+                priority: document.getElementById('taskPriorityInput').value
+            };
+
+            tasks.push(newTask);
+            saveToCloud();
+            closeModal();
+        }
+
+        window.deleteTask = function(id) {
+            tasks = tasks.filter(t => t.id !== id);
+            saveToCloud();
+        }
+
+        window.moveTask = function(id, newStatus) {
+            let t = tasks.find(item => item.id === id);
+            if(t) {
+                t.status = newStatus;
+                saveToCloud();
+            }
+        }
+
+        function renderTasks() {
+            ['todo', 'inprogress', 'done'].forEach(status => {
+                let container = document.querySelector(`.task-container[data-status="${status}"]`);
+                if(container) container.innerHTML = '';
+            });
+
+            let counts = { todo: 0, inprogress: 0, done: 0 };
+
+            tasks.forEach(task => {
+                counts[task.status]++;
+                let container = document.querySelector(`.task-container[data-status="${task.status}"]`);
+                if(!container) return;
+
+                let badgeColor = task.priority === 'Tinggi' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
+                                 task.priority === 'Sedang' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 
+                                 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+
+                let card = document.createElement('div');
+                card.className = "bg-slate-900 border border-slate-700/80 p-3.5 rounded-xl shadow cursor-grab active:cursor-grabbing flex flex-col gap-2 relative group";
+                card.draggable = true;
+                card.ondragstart = (e) => e.dataTransfer.setData('text/plain', task.id);
+                
+                card.innerHTML = `
+                    <div class="flex justify-between items-start gap-2">
+                        <span class="text-sm font-medium text-slate-200 leading-snug">${escapeHtml(task.title)}</span>
+                        <button onclick="deleteTask(${task.id})" class="text-slate-500 hover:text-rose-400 text-xs px-1 cursor-pointer">✕</button>
+                    </div>
+                    <div class="flex justify-between items-center mt-1">
+                        <span class="text-[10px] px-2 py-0.5 rounded-full border ${badgeColor}">${task.priority}</span>
+                        <div class="flex gap-1 text-[10px] text-slate-400">
+                            ${task.status !== 'todo' ? `<button onclick="moveTask(${task.id}, '${task.status === 'done' ? 'inprogress' : 'todo'}')" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 cursor-pointer">◀</button>` : ''}
+                            ${task.status !== 'done' ? `<button onclick="moveTask(${task.id}, '${task.status === 'todo' ? 'inprogress' : 'done'}')" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 cursor-pointer">▶</button>` : ''}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            document.getElementById('todoCount').textContent = counts.todo;
+            document.getElementById('inprogressCount').textContent = counts.inprogress;
+            document.getElementById('doneCount').textContent = counts.done;
+        }
+
+        window.allowDrop = function(e) { e.preventDefault(); }
+        window.drop = function(e) {
+            e.preventDefault();
+            let id = Number(e.dataTransfer.getData('text/plain'));
+            let newStatus = e.currentTarget.getAttribute('data-status');
+            moveTask(id, newStatus);
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+    </script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased p-4">
 
     <!-- Header & Room Controller -->
     <header class="max-w-6xl mx-auto mb-6 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-700">
         <div>
-            <h1 class="text-xl font-bold flex items-center gap-2">📋 Kanban Board Kolaborasi</h1>
-            <p class="text-xs text-slate-400 mt-1">Room Aktif: <span id="currentRoomDisplay" class="text-indigo-400 font-semibold">-</span></p>
+            <h1 class="text-xl font-bold flex items-center gap-2">📋 Kanban Board Real-Time</h1>
+            <p class="text-xs text-slate-400 mt-1">Room Aktif: <span id="currentRoomDisplay" class="text-indigo-400 font-semibold">-</span> | <span class="text-emerald-400">● Live Cloud Sync</span></p>
         </div>
         <div class="flex items-center gap-2 w-full md:w-auto">
             <input type="text" id="roomInput" placeholder="Nama Room Unik..." class="bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-indigo-500 flex-1 md:w-56">
@@ -81,169 +242,5 @@
             </div>
         </div>
     </div>
-
-    <!-- Script Logika & Cloud Sync -->
-    <script>
-        let currentRoom = window.location.hash ? window.location.hash.substring(1) : 'pribadi-saya';
-        let tasks = [];
-
-        document.getElementById('roomInput').value = currentRoom;
-        document.getElementById('currentRoomDisplay').textContent = currentRoom;
-        
-        fetchTasks();
-        setInterval(fetchTasks, 3000); // Auto-sync setiap 3 detik
-
-        function switchRoom() {
-            let val = document.getElementById('roomInput').value.trim().toLowerCase().replace(/\s+/g, '-');
-            if(!val) return alert('Nama room tidak boleh kosong!');
-            window.location.hash = val;
-            currentRoom = val;
-            document.getElementById('currentRoomDisplay').textContent = currentRoom;
-            fetchTasks();
-        }
-
-        function shareRoom() {
-            let shareUrl = window.location.origin + window.location.pathname + '#' + currentRoom;
-            navigator.clipboard.writeText(shareUrl).then(() => {
-                alert('Link room berhasil disalin! Kirim link ini ke teman kelompokmu:\n\n' + shareUrl);
-            }).catch(() => {
-                prompt("Salin link ini:", shareUrl);
-            });
-        }
-
-        async function fetchTasks() {
-            try {
-                let res = await fetch(`https://api.allorigins.win/get?url=` + encodeURIComponent(`https://json.extendsclass.com/bin/kanban_${currentRoom}`));
-                if(res.ok) {
-                    let data = await res.json();
-                    if(data.contents) {
-                        let parsed = JSON.parse(data.contents);
-                        if(Array.isArray(parsed)) {
-                            tasks = parsed;
-                            renderTasks();
-                            return;
-                        }
-                    }
-                }
-            } catch(e) {
-                // Fallback ke localStorage jika gagal terhubung
-            }
-            let local = localStorage.getItem('kanban_fallback_' + currentRoom);
-            if(local) {
-                tasks = JSON.parse(local);
-                renderTasks();
-            }
-        }
-
-        async function syncToCloud() {
-            renderTasks();
-            localStorage.setItem('kanban_fallback_' + currentRoom, JSON.stringify(tasks));
-            try {
-                await fetch(`https://json.extendsclass.com/bin/kanban_${currentRoom}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(tasks)
-                });
-            } catch(e) {
-                console.log('Background sync pending');
-            }
-        }
-
-        function openModal(status) {
-            document.getElementById('taskStatusInput').value = status;
-            document.getElementById('taskTitleInput').value = '';
-            document.getElementById('taskModal').classList.remove('hidden');
-            document.getElementById('taskModal').classList.add('flex');
-        }
-
-        function closeModal() {
-            document.getElementById('taskModal').classList.remove('flex');
-            document.getElementById('taskModal').classList.add('hidden');
-        }
-
-        function saveTask() {
-            let title = document.getElementById('taskTitleInput').value.trim();
-            if(!title) return alert('Judul tidak boleh kosong!');
-            
-            let newTask = {
-                id: Date.now(),
-                title: title,
-                status: document.getElementById('taskStatusInput').value,
-                priority: document.getElementById('taskPriorityInput').value
-            };
-
-            tasks.push(newTask);
-            syncToCloud();
-            closeModal();
-        }
-
-        function deleteTask(id) {
-            tasks = tasks.filter(t => t.id !== id);
-            syncToCloud();
-        }
-
-        function moveTask(id, newStatus) {
-            let t = tasks.find(item => item.id === id);
-            if(t) {
-                t.status = newStatus;
-                syncToCloud();
-            }
-        }
-
-        function renderTasks() {
-            ['todo', 'inprogress', 'done'].forEach(status => {
-                let container = document.querySelector(`.task-container[data-status="${status}"]`);
-                if(container) container.innerHTML = '';
-            });
-
-            let counts = { todo: 0, inprogress: 0, done: 0 };
-
-            tasks.forEach(task => {
-                counts[task.status]++;
-                let container = document.querySelector(`.task-container[data-status="${task.status}"]`);
-                if(!container) return;
-
-                let badgeColor = task.priority === 'Tinggi' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
-                                 task.priority === 'Sedang' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 
-                                 'bg-blue-500/20 text-blue-400 border-blue-500/30';
-
-                let card = document.createElement('div');
-                card.className = "bg-slate-900 border border-slate-700/80 p-3.5 rounded-xl shadow cursor-grab active:cursor-grabbing flex flex-col gap-2 relative group";
-                card.draggable = true;
-                card.ondragstart = (e) => e.dataTransfer.setData('text/plain', task.id);
-                
-                card.innerHTML = `
-                    <div class="flex justify-between items-start gap-2">
-                        <span class="text-sm font-medium text-slate-200 leading-snug">${escapeHtml(task.title)}</span>
-                        <button onclick="deleteTask(${task.id})" class="text-slate-500 hover:text-rose-400 text-xs px-1 cursor-pointer">✕</button>
-                    </div>
-                    <div class="flex justify-between items-center mt-1">
-                        <span class="text-[10px] px-2 py-0.5 rounded-full border ${badgeColor}">${task.priority}</span>
-                        <div class="flex gap-1 text-[10px] text-slate-400">
-                            ${task.status !== 'todo' ? `<button onclick="moveTask(${task.id}, '${task.status === 'done' ? 'inprogress' : 'todo'}')" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 cursor-pointer">◀</button>` : ''}
-                            ${task.status !== 'done' ? `<button onclick="moveTask(${task.id}, '${task.status === 'todo' ? 'inprogress' : 'done'}')" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 cursor-pointer">▶</button>` : ''}
-                        </div>
-                    </div>
-                `;
-                container.appendChild(card);
-            });
-
-            document.getElementById('todoCount').textContent = counts.todo;
-            document.getElementById('inprogressCount').textContent = counts.inprogress;
-            document.getElementById('doneCount').textContent = counts.done;
-        }
-
-        function allowDrop(e) { e.preventDefault(); }
-        function drop(e) {
-            e.preventDefault();
-            let id = Number(e.dataTransfer.getData('text/plain'));
-            let newStatus = e.currentTarget.getAttribute('data-status');
-            moveTask(id, newStatus);
-        }
-
-        function escapeHtml(text) {
-            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        }
-    </script>
 </body>
 </html>
